@@ -106,7 +106,7 @@ Scrapes a job posting page and uses Claude AI to write a concise, personalized o
 ### Usage
 
 ```bash
-python outreach.py <job_url>
+python outreach.py "job_url"
 ```
 
 ### Example
