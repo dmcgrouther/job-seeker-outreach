@@ -112,7 +112,7 @@ python outreach.py "job_url"
 ### Example
 
 ```bash
-python outreach.py "https://careers.acmecorp.com/en/jobs/jr317953/solution-engineer-pre-sales-all-levels/"
+python outreach.py "https://careers.acmecorp.com/en/jobs/123"
 ```
 
 ### Example Output
