@@ -1,6 +1,6 @@
-# Recruiter Outreach Tool
+# Job Seeker Outreach Tool
 
-A two-script toolkit that finds a recruiter's email address and generates a personalized outreach email using AI.
+A two-script toolkit that can help find someone's email address and and can generate a personalized outreach email using AI.
 
 ---
 
