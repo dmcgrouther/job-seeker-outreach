@@ -25,7 +25,7 @@ pip install selenium webdriver-manager dnspython requests beautifulsoup4 anthrop
 
 `outreach.py` uses Claude AI to write the email. You need an API key from [console.anthropic.com](https://console.anthropic.com).
 
-As an example, you could do enter this command when using powershell:
+As an example, you could do enter this command when using powershell (just swap in your API key):
 ```powershell
 $env:ANTHROPIC_API_KEY='sk-ant-...'
 ```
