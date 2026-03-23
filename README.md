@@ -1,5 +1,6 @@
 # Job Seeker Outreach Tool
 
+
 A two-script toolkit that can help find someone's email address and and can generate a personalized outreach email using AI.
 
 ---
