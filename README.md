@@ -1,6 +1,6 @@
 # Job Seeker Outreach Tool
 
-A two-script toolkit that can help find someone's email address and and can generate a personalized outreach email using AI.
+A two-script toolkit that can help find someone's email address and generate a personalized outreach email using AI.
 
 ---
 
@@ -9,30 +9,78 @@ A two-script toolkit that can help find someone's email address and and can gene
 | File | Description |
 |---|---|
 | `find_email.py` | Finds and SMTP-verifies a person's work email address |
-| `outreach.py` | Scrapes a job page and generates a personalized outreach email via Claude AI |
+| `outreach.py` | Scrapes a job page and generates a personalized outreach email via AI|
 
 ---
 
 ## Setup
 
-### 1. Install dependencies
+### 1. Create a virtual environment
+
+It is strongly recommended to run these scripts inside a Python virtual environment to keep dependencies isolated from your system Python.
 
 ```bash
-pip install selenium webdriver-manager dnspython requests beautifulsoup4 anthropic
+# Create the venv once, inside your project folder
+python3 -m venv .venv
+
+# Activate it for each session
+source .venv/bin/activate
 ```
 
-### 2. Set your Anthropic API key
+### 2. Install dependencies
 
-`outreach.py` uses Claude AI to write the email. You need an API key from [console.anthropic.com](https://console.anthropic.com).
+```bash
+pip install -r requirements.in
+```
+
+Or directly:
+
+```bash
+pip install anthropic beautifulsoup4 ddgs dnspython google-genai groq requests selenium
+```
+
+### 3. Set your API keys
+
+The scripts support multiple AI engines and email lookup sources. Set the keys for the ones you want to use.
+
+**Linux / macOS**
+
+```bash
+# Required for outreach.py — at least one AI engine key is needed
+export ANTHROPIC_API_KEY="sk-ant-..."   # console.anthropic.com (pay-as-you-go)
+export GROQ_API_KEY="..."               # console.groq.com (free tier)
+export GEMINI_API_KEY="..."             # aistudio.google.com (free tier)
+
+# Optional — improves email format detection in find_email.py
+export HUNTER_API_KEY="..."             # hunter.io (free tier: 50 searches/month)
+```
+
+Then reload:
+
+```bash
+source ~/.profile
+```
+
+**Windows**
 
 As an example, you could do enter this command when using powershell (just swap in your API key):
 ```powershell
-$env:ANTHROPIC_API_KEY='sk-ant-...'
+$env:ANTHROPIC_API_KEY="sk-ant-..."
+$env:GROQ_API_KEY="..."
 ```
 
-### 3. Edit your background blurb
+Where to get each key:
 
-In `outreach.py`, update the blurb at the top of the file so Claude can personalize the email to you:
+| Key | Source |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) |
+| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) 
+| `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com) |
+| `HUNTER_API_KEY` | [hunter.io](https://hunter.io) |
+
+### 4. Edit your background blurb
+
+In `outreach.py`, update the blurb at the top of the file so the AI can personalize the email to you:
 
 ```python
 MY_BLURB = """
@@ -40,15 +88,22 @@ I'm a solutions engineer with a background in sales and software development...
 """
 ```
 
-### 4. Install Google Chrome
+### 5. Install Google Chrome
 
-Make sure Google Chrome is installed. The script will automatically download the matching ChromeDriver.
+`find_email.py` uses Google/Selenium only as a last resort. If you want this fallback available, install Chromium:
+
+```bash
+# Ubuntu / Debian
+sudo apt install -y chromium-browser
+```
+
+On Ubuntu with snap, Selenium Manager will automatically detect and use the correct ChromeDriver version (no manual driver installation needed.
 
 ---
 
 ## Script 1 — find_email.py
 
-Searches Google for a company's email format, infers the most likely email address for a given person, and verifies it exists via SMTP.
+Finds the most likely work email address for a given person by detecting the company's email format, and verifies it exists via SMTP.
 
 ### Usage
 
@@ -84,10 +139,16 @@ python find_email.py "Jane Smith" "Acme Corp"
 
 ### How It Works
 
-1. Opens Chrome and searches Google for `[Company] email format`
-2. Scrapes the results to detect the company domain and email pattern
-3. Generates a list of candidate email addresses based on common formats
-4. Probes the mail server via SMTP to verify which address exists
+1. Email format lookup uses a cascading fallback across few sources, stopping at the first success:
+
+| Priority | Source | Notes |
+|---|---|---|
+| 1 | Hunter.io API | Most accurate — requires `HUNTER_API_KEY` |
+| 2 | DuckDuckGo (`ddgs`) | Free, unlimited, no browser |
+| 3 | Google (Selenium) | Last resort — requires Chromium installed |
+
+2. Infers the company domain and email pattern, and generates a list of candidate email addresses based on common formats
+3. Probes the mail server via SMTP to verify which address exists
 
 ### SMTP Verification Results
 
@@ -97,11 +158,12 @@ python find_email.py "Jane Smith" "Acme Corp"
 | Inconclusive | Server could not confirm or deny (catch-all or port blocked) |
 | Invalid | Mailbox rejected by the mail server |
 
+
 ---
 
 ## Script 2 — outreach.py
 
-Scrapes a job posting page and uses Claude AI to write a concise, personalized outreach email based on the role and your background blurb.
+Scrapes a job posting page and uses AI to write a concise, personalized outreach email based on the role and your background blurb.
 
 ### Usage
 
@@ -135,9 +197,17 @@ python outreach.py "https://careers.acmecorp.com/en/jobs/123"
 
 1. Fetches and parses the job posting URL
 2. Extracts the role title, company name, and job description
-3. Sends your background blurb + the job content to Claude AI
-4. Claude writes a tailored email under 250 words with a subject line and call to action
+3. Sends your background blurb + the job content to the selected AI engine
+4. AI writes a tailored email under 250 words with a subject line and call to action
 5. Prints the email to the terminal and saves it as a `.txt` file
+
+AI engine selection uses a cascading fallback, stopping at the first success:
+
+| Priority | Engine | Notes |
+|---|---|---|
+| 1 | Claude (Anthropic) | Pay-as-you-go, highest quality |
+| 2 | Gemini (Google) | Free tier, region-dependent |
+| 3 | Groq (Llama 3.3) | Free, fast |
 
 ---
 
@@ -163,6 +233,8 @@ Then copy the email from `outreach.py`'s output and send it to the address found
 - **Port 25 blocking** — Some ISPs block outbound port 25 used for SMTP probing. If verification times out, proceed with the guessed address.
 - **Google CAPTCHA** — `find_email.py` scrapes Google search results. If a CAPTCHA appears, wait a few minutes and try again.
 - **Claude API costs** — Each run of `outreach.py` makes one API call to Claude, billed to your Anthropic account.
+- **Hunter.io quota** — The free tier provides 50 searches/month. Results for well-known companies are often cached and do not consume quota.
+- **Gemini free tier** — The Gemini API free tier is not available in all regions. Canadian IPs may experience quota issues. Groq is the recommended free alternative.
 - **Site compatibility** — `outreach.py` does not work with every job site. Sites like LinkedIn require authentication to view job postings and will block the scraper. For best results use direct company careers pages (e.g. `careers.acmecorp.com`) rather than third-party job boards.
 
 ---
@@ -171,8 +243,12 @@ Then copy the email from `outreach.py`'s output and send it to the address found
 
 | Problem | Fix |
 |---|---|
-| `ModuleNotFoundError` | Run `pip install selenium webdriver-manager dnspython requests beautifulsoup4 anthropic` |
+| `ModuleNotFoundError` | Run `pip install -r requirements.in` |
 | Chrome crash / backtrace symbols | Run `pip install --upgrade webdriver-manager` |
-| `ANTHROPIC_API_KEY not set` | Export the key in your terminal (see Setup step 2) |
+| `ANTHROPIC_API_KEY not set` | Export the key in your terminal (see Setup step 3) |
+| `GROQ_API_KEY not set` | Sign up at [console.groq.com](https://console.groq.com) and export the key |
+| Hunter.io returns no pattern | Company may not be in Hunter's database — DuckDuckGo fallback will be used |
 | Wrong email domain returned | The blocklist in `find_email.py` may need updating — check `BLOCKED_DOMAINS` |
 | Google returns aggregator sites | Try a more specific search by adding the company's website domain to the query |
+| Selenium / Chrome errors | Install Chromium (`sudo apt install chromium-browser`) — only needed for Google fallback |
+| Gemini quota errors (`limit: 0`) | Free tier not available in your region — use Groq instead |

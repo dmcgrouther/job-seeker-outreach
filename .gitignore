@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+*.code-workspace
+
+# Generated outreach emails — personal output, not source code
+outreach_*.txt
+
+# Environment (if you ever accidentally create one here)
+.env
