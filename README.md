@@ -1,6 +1,6 @@
 # Job Seeker Outreach Tool
 
-A two-script toolkit that can help find someone's email address and and can generate a personalized outreach email using AI.
+A two-script toolkit that can help find someone's email address and generate a personalized outreach email using AI.
 
 ---
 
@@ -10,6 +10,7 @@ A two-script toolkit that can help find someone's email address and and can gene
 |---|---|
 | `find_email.py` | Finds and SMTP-verifies a person's work email address |
 | `outreach.py` | Scrapes a job page and generates a personalized outreach email via Claude AI |
+| `logger.py` | Logging utility |
 
 ---
 
@@ -18,19 +19,27 @@ A two-script toolkit that can help find someone's email address and and can gene
 ### 1. Install dependencies
 
 ```bash
-pip install selenium webdriver-manager dnspython requests beautifulsoup4 anthropic
+pip install selenium webdriver-manager dnspython requests beautifulsoup4 anthropic ddgs
 ```
 
 ### 2. Set your Anthropic API key
 
 `outreach.py` uses Claude AI to write the email. You need an API key from [console.anthropic.com](https://console.anthropic.com).
 
-As an example, you could do enter this command when using powershell (just swap in your API key):
+As an example, you could enter this command when using powershell (just swap in your API key):
 ```powershell
 $env:ANTHROPIC_API_KEY='sk-ant-...'
 ```
 
-### 3. Edit your background blurb
+### 3. Set your Hunter API key
+
+`find_email.py` uses Hunter to find email formats. To use this option, you need an API key from [hunter.io](https://hunter.io).
+
+As an example, you could enter this command when using powershell (just swap in your API key):
+```powershell
+$env:HUNTER_API_KEY='...'
+
+### 4. Edit your background blurb
 
 In `outreach.py`, update the blurb at the top of the file so Claude can personalize the email to you:
 
@@ -40,15 +49,22 @@ I'm a solutions engineer with a background in sales and software development...
 """
 ```
 
-### 4. Install Google Chrome
+### 5. Install Google Chrome
 
-Make sure Google Chrome is installed. The script will automatically download the matching ChromeDriver.
+`find_email.py` uses Google/Selenium only if Hunter fails to find an email format. If you want this fallback available, install Chromium:
+
+```bash
+# Ubuntu / Debian
+sudo apt install -y chromium-browser
+```
+
+On Ubuntu with snap, Selenium Manager will automatically detect and use the correct ChromeDriver version (no manual driver installation needed.
 
 ---
 
 ## Script 1 — find_email.py
 
-Searches Google for a company's email format, infers the most likely email address for a given person, and verifies it exists via SMTP.
+Finds the most likely work email address for a given person by detecting the company's email format, and verifies it exists via SMTP.
 
 ### Usage
 
@@ -84,10 +100,16 @@ python find_email.py "Jane Smith" "Acme Corp"
 
 ### How It Works
 
-1. Opens Chrome and searches Google for `[Company] email format`
-2. Scrapes the results to detect the company domain and email pattern
-3. Generates a list of candidate email addresses based on common formats
-4. Probes the mail server via SMTP to verify which address exists
+1. Email format lookup uses a cascading fallback across few sources, stopping at the first success:
+
+| Priority | Source | Notes |
+|---|---|---|
+| 1 | Hunter.io API | Most accurate — requires `HUNTER_API_KEY` |
+| 2 | Google (Selenium) | requires Chromium installed |
+| 3 | DuckDuckGo (`ddgs`) | Last resort — Free, unlimited |
+
+2. Infers the company domain and email pattern, and generates a list of candidate email addresses based on common formats
+3. Probes the mail server via SMTP to verify which address exists
 
 ### SMTP Verification Results
 
@@ -171,8 +193,9 @@ Then copy the email from `outreach.py`'s output and send it to the address found
 
 | Problem | Fix |
 |---|---|
-| `ModuleNotFoundError` | Run `pip install selenium webdriver-manager dnspython requests beautifulsoup4 anthropic` |
+| `ModuleNotFoundError` | Run `pip install selenium webdriver-manager dnspython requests beautifulsoup4 anthropic ddgs` |
 | Chrome crash / backtrace symbols | Run `pip install --upgrade webdriver-manager` |
 | `ANTHROPIC_API_KEY not set` | Export the key in your terminal (see Setup step 2) |
 | Wrong email domain returned | The blocklist in `find_email.py` may need updating — check `BLOCKED_DOMAINS` |
 | Google returns aggregator sites | Try a more specific search by adding the company's website domain to the query |
+| Hunter.io returns no pattern | Company may not be in Hunter's database  |
