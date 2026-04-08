@@ -2,26 +2,36 @@
 Email Finder Script
 Usage: python find_email.py "John Doe" "Acme Corp"
 
-Searches Google for the company's email format, infers the likely
-email address for the given person, then verifies it via SMTP.
+Searches for the company's email format using multiple sources,
+infers the most likely email address for the given person, then
+verifies it via SMTP.
 
 Requirements:
-    pip install selenium webdriver-manager dnspython
+    pip install requests beautifulsoup4 ddgs selenium dnspython
 """
 
-import sys
+import logging
+import os
 import re
-import time
-import socket
 import smtplib
+import socket
+import sys
+import time
+
 import dns.resolver
+import requests
+from bs4 import BeautifulSoup
+from ddgs import DDGS
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+from logger import setup_logging
+log = setup_logging(__name__)
 
 
 # ── Common email format templates ────────────────────────────────────────────
@@ -71,7 +81,7 @@ def _is_blocked(domain: str) -> bool:
 
 def extract_domain(text: str, company: str = '') -> str | None:
     """
-    Pull the target company's domain from Google snippet text.
+    Pull the target company's domain from snippet text.
 
     Strategy (in priority order):
       1. Find actual email addresses in the text (@ pattern) — most reliable.
@@ -127,16 +137,88 @@ def detect_format_from_text(text: str) -> str | None:
     return None
 
 
-# ── Selenium search ───────────────────────────────────────────────────────────
+# ── Search from multiple providers ────────────────────────────────────────────────────────────
 
-def search_google(query: str, headless: bool = False) -> str:
-    """Open Chrome, search Google, return the combined snippet text."""
+# Hunter.io uses {first}, {f}, {last}, {l} notation
+HUNTER_PATTERN_MAP = {
+    '{first}.{last}':  'firstname.lastname',
+    '{f}{last}':       'flastname',
+    '{first}{l}':      'firstnamel',
+    '{first}':         'firstname',
+    '{last}':          'lastname',
+    '{f}.{last}':      'f.lastname',
+    '{first}_{last}':  'firstname_lastname',
+    '{first}{last}':   'firstnamelastname',
+    '{last}.{first}':  'lastname.firstname',
+    '{last}{f}':       'lastnamef',
+}
+
+def _search_hunter(company: str) -> dict | None:
+    """Query Hunter.io domain-search API, return structured result."""
+    api_key = os.environ.get('HUNTER_API_KEY')
+    if not api_key:
+        log.warning('HUNTER_API_KEY not set — skipping Hunter.io')
+        return None
+
+    resp = requests.get(
+        'https://api.hunter.io/v2/domain-search',
+        params={'company': company, 'api_key': api_key, 'limit': 5},
+        timeout=10,
+    )
+    if resp.status_code != 200:
+        log.warning('Hunter HTTP error: %s', resp.status_code)
+        return None
+
+    payload = resp.json()
+
+    # Check for API-level errors (quota exceeded etc.) returned with HTTP 200
+    errors = payload.get('errors', [])
+    if errors:
+        for err in errors:
+            log.warning('Hunter API error: %s (code %s)', err.get('details'), err.get('code'))
+        return None
+
+    data = payload.get('data', {})
+    hunter_pattern = data.get('pattern')
+    domain = data.get('domain')
+    accept_all = data.get('accept_all', False)
+
+    log.debug('Hunter raw pattern: %s, domain: %s, accept_all: %s', hunter_pattern, domain, accept_all)
+
+    if not hunter_pattern or not domain:
+        return None
+
+    fmt = HUNTER_PATTERN_MAP.get(hunter_pattern)
+    if not fmt:
+        log.warning('Unknown Hunter pattern "%s" — no translation available', hunter_pattern)
+        return {'snippet': '', 'domain': domain, 'format': None}
+
+    return {
+        'snippet': '', 'domain': domain, 'format': fmt, 'accept_all': accept_all,
+    }
+
+
+def _search_ddgs(company: str) -> dict | None:
+    """Search ddgs for email format snippet text."""
+    with DDGS() as ddgs:
+        results = list(ddgs.text(f'{company} email format', max_results=8))
+    if not results:
+        return None
+
+    return {'snippet': '\n'.join(r['body'] for r in results), 'domain': None, 'format': None}
+
+
+def _search_google(company: str) -> dict | None:
+    """Use Selenium + Chromium to scrape Google search results."""
     options = webdriver.ChromeOptions()
-    if headless:
-        options.add_argument('--headless=new')
+    options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu')
     options.add_argument('--disable-blink-features=AutomationControlled')
+    options.add_argument('--disable-software-rasterizer')
+    options.add_argument('--disable-extensions')
+    options.add_argument('--remote-debugging-port=9222')
     options.add_experimental_option('excludeSwitches', ['enable-automation'])
     options.add_experimental_option('useAutomationExtension', False)
     options.add_argument(
@@ -144,10 +226,8 @@ def search_google(query: str, headless: bool = False) -> str:
         'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     )
 
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()),
-        options=options,
-    )
+    # Selenium Manager handles driver automatically — no Service or path needed
+    driver = webdriver.Chrome(options=options)
 
     try:
         driver.get('https://www.google.com')
@@ -164,7 +244,7 @@ def search_google(query: str, headless: bool = False) -> str:
         search_box = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.NAME, 'q'))
         )
-        search_box.send_keys(query)
+        search_box.send_keys(f'{company} email format')
         search_box.send_keys(Keys.RETURN)
 
         WebDriverWait(driver, 10).until(
@@ -174,10 +254,37 @@ def search_google(query: str, headless: bool = False) -> str:
 
         # Grab all visible text from the results section
         results_div = driver.find_element(By.ID, 'search')
-        return results_div.text
+        return {'snippet': results_div.text, 'domain': None, 'format': None}
 
     finally:
         driver.quit()
+
+
+# Ordered list of callable providers for the search
+_SEARCH_SOURCES = [
+    ('Hunter',  _search_hunter),
+    ('Google',  _search_google),
+    ('DDGS',    _search_ddgs),
+]
+
+
+def search_email_format(company: str) -> dict:
+    """
+    Try each source in order, returning the first successful result.
+    Result dict keys: snippet (str), domain (str|None), format (str|None).
+    """
+    for label, fn in _SEARCH_SOURCES:
+        log.info('Trying %s', label)
+        try:
+            result = fn(company)
+            if result:
+                log.info('Found result via %s', label)
+                return result
+        except Exception as e:
+            log.warning('%s failed: %s', label, e)
+
+    log.error('All sources exhausted — no email format found for "%s"', company)
+    return {'snippet': '', 'domain': None, 'format': None}
 
 
 # ── SMTP email verifier ───────────────────────────────────────────────────────
@@ -252,16 +359,20 @@ def verify_candidates(candidates: list[tuple[str, str]], best_email: str) -> tup
     ordered = [best_email] + [e for e, _ in candidates if e != best_email]
 
     for email in ordered:
-        print(f'  📡  SMTP probing {email} …')
+        log.info('SMTP probing %s', email)
+
+        # brief delay between probes to avoid triggering rate limiting
+        time.sleep(2)
+
         result = verify_email_smtp(email)
         if result['valid'] is True:
             return email, result          # confirmed — stop here
         elif result['valid'] is False:
-            print(f'      ✗  {result["reason"]}')
-            continue                      # definitely bad — try next
+            log.warning('SMTP rejected %s: %s', email, result['reason'])
+            continue
         else:
-            print(f'      ?  {result["reason"]}')
-            return email, result          # inconclusive — return with caveat
+            log.warning('SMTP inconclusive for %s: %s', email, result['reason'])
+            continue
 
     return best_email, {'valid': False, 'reason': 'All candidates rejected by mail server', 'mx_host': None}
 
@@ -274,24 +385,22 @@ def find_email(full_name: str, company: str) -> dict:
         raise ValueError("Please provide both first and last name.")
     first, last = parts[0], parts[-1]
 
-    query = f'{company} email format'
-    print(f'\n🔍  Searching Google: "{query}"')
-    snippet_text = search_google(query)
-
-    print('\n📄  Analysing search results …')
+    log.info('Analysing search results for "%s"', company)
+    result = search_email_format(company)
+    snippet_text = result['snippet']
 
     # 1. Try to find the domain
-    domain = extract_domain(snippet_text, company)
+    domain = result['domain'] or extract_domain(snippet_text, company)
     if not domain:
         # Fallback: guess domain from company name
         slug = re.sub(r'[^a-z0-9]', '', company.lower())
         domain = f'{slug}.com'
-        print(f'⚠️   Could not detect domain – guessing: {domain}')
+        log.warning('Could not detect domain — guessing: %s', domain)
     else:
-        print(f'✅  Detected domain: {domain}')
+        log.info('Detected domain: %s', domain)
 
     # 2. Try to detect the format
-    detected_fmt = detect_format_from_text(snippet_text)
+    detected_fmt = result['format'] or detect_format_from_text(snippet_text)
 
     # 3. Build all candidates and rank them
     candidates = generate_candidates(first, last, domain)
@@ -300,19 +409,23 @@ def find_email(full_name: str, company: str) -> dict:
     if detected_fmt and detected_fmt in fmt_map:
         best_email = fmt_map[detected_fmt]
         confidence = 'High'
-        print(f'✅  Detected format: {detected_fmt}')
+        log.info('Detected format: %s', detected_fmt)
     else:
         best_email = fmt_map['firstname.lastname']
         confidence = 'Medium (defaulted to most common pattern)'
         detected_fmt = 'firstname.lastname'
-        print(f'⚠️   Could not detect format – defaulting to most common pattern.')
+        log.warning('Could not detect format – defaulting to most common pattern.')
 
     # 4. SMTP verification
-    print('\n🔬  Verifying email via SMTP …')
+    log.info('Verifying email via SMTP …')
     verified_email, smtp_result = verify_candidates(candidates, best_email)
 
     if smtp_result['valid'] is True:
-        smtp_status = '✅ Verified — mailbox exists'
+        accept_all = result.get('accept_all', False)
+        if accept_all:
+            smtp_status = '⚠️  Accepted — but server is catch-all, cannot confirm mailbox exists'
+        else:
+            smtp_status = '✅ Verified — mailbox exists'
     elif smtp_result['valid'] is False:
         smtp_status = '❌ Invalid — mailbox rejected'
     else:
