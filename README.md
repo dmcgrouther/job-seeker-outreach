@@ -38,7 +38,7 @@ $env:ANTHROPIC_API_KEY='sk-ant-...'
 As an example, you could enter this command when using powershell (just swap in your API key):
 ```powershell
 $env:HUNTER_API_KEY='...'
-
+```
 ### 4. Edit your background blurb
 
 In `outreach.py`, update the blurb at the top of the file so Claude can personalize the email to you:
