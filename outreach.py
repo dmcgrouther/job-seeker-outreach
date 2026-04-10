@@ -14,10 +14,14 @@ Example:
 
 import sys
 import os
+import time
 import argparse
 from datetime import datetime
 from pathlib import Path
 
+# ── Logging ───────────────────────────────────────────────────────────────────
+from logger import setup_logging
+log = setup_logging(__name__)
 
 # ─────────────────────────────────────────────
 # ✏️  YOUR BACKGROUND BLURB — Edit this!
@@ -43,8 +47,8 @@ def scrape_job_page(url: str) -> dict:
         import requests
         from bs4 import BeautifulSoup
     except ImportError:
-        print("[ERROR] Required libraries missing.")
-        print("        Install them with: pip install requests beautifulsoup4")
+        log.error("Required libraries missing.")
+        log.error("        Install them with: pip install requests beautifulsoup4")
         sys.exit(1)
 
     print(f"\n[→] Fetching job page: {url}")
@@ -61,7 +65,7 @@ def scrape_job_page(url: str) -> dict:
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"[ERROR] Could not fetch the page: {e}")
+        log.error("Could not fetch the page: %s", e)
         sys.exit(1)
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -102,26 +106,9 @@ def scrape_job_page(url: str) -> dict:
 # 2. Email Generator (Claude API)
 # ─────────────────────────────────────────────
 
-def generate_email(job_info: dict, blurb: str) -> str:
-    """Send job info + blurb to Claude and get back a letter of interest."""
-    try:
-        import anthropic
-    except ImportError:
-        print("[ERROR] anthropic SDK not found.")
-        print("        Install it with: pip install anthropic")
-        sys.exit(1)
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        print("[ERROR] ANTHROPIC_API_KEY environment variable is not set.")
-        print("        Export it with: export ANTHROPIC_API_KEY='sk-ant-...'")
-        sys.exit(1)
-
-    client = anthropic.Anthropic(api_key=api_key)
-
-    print("\n[→] Generating personalized email with Claude...")
-
-    prompt = f"""You are an expert career coach helping a job seeker write a compelling,
+def build_prompt(job_info: dict, blurb: str) -> str:
+    """Build the shared prompt for any AI engine."""
+    return f"""You are an expert career coach helping a job seeker write a compelling,
 personalized letter of interest / cold outreach email to a recruiter or hiring manager.
 
 Here is the job posting / company page the candidate is applying to:
@@ -151,13 +138,121 @@ Subject: [subject line]
 [email body]
 """
 
-    message = client.messages.create(
+
+def call_claude(prompt: str) -> str:
+    """Call Claude API and return the response text."""
+    try:
+        import anthropic
+    except ImportError:
+        log.error("anthropic SDK not found.")
+        log.error("        Install it with: pip install anthropic")
+        return None
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        log.error("ANTHROPIC_API_KEY environment variable is not set.")
+        log.error("        Export it with: export ANTHROPIC_API_KEY='sk-ant-...'")
+        return None
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=1000,
         messages=[{"role": "user", "content": prompt}],
     )
+    return response.content[0].text
 
-    return message.content[0].text
+
+def call_gemini(prompt: str) -> str:
+    """Call Gemini API and return the response text."""
+    try:
+        from google import genai
+        from google.genai import errors
+    except ImportError:
+        log.error("google-genai SDK not found.")
+        log.error("        Install it with: pip install google-genai")
+        return None
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+       log.error("GEMINI_API_KEY environment variable is not set.")
+       log.error("        Export it with: export GEMINI_API_KEY='...'")
+       return None
+
+    client = genai.Client(api_key=api_key)
+    """Generates content with exponential backoff to handle 429 errors."""
+    max_retries = 1
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+            return response.text
+        except errors.ClientError as e:
+            # Check if it's a Rate Limit (429) error
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                # Calculate wait time: 2^attempt
+                wait_time = (2 ** attempt)
+                log.warning("Rate limit hit (Attempt %d/%d). Waiting %.2f seconds...",
+                            attempt + 1, max_retries, wait_time)
+                time.sleep(wait_time)
+            else:
+                # If it's a different error (like 400 Bad Request), return immediately
+                log.error("A non-rate-limit error occurred: %s", e)
+                return None
+    log.error("Max retries exceeded. The API might be down or your daily quota is empty.")
+    return None
+
+
+def call_groq(prompt: str) -> str:
+    """Call Groq API and return the response text."""
+    try:
+        from groq import Groq
+    except ImportError:
+        log.error("groq SDK not found.")
+        log.error("        Install it with: pip install groq")
+        return none
+
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        log.error("GROQ_API_KEY environment variable is not set.")
+        log.error("        Export it with: export GROQ_API_KEY='...'")
+        return none
+
+    client = Groq(api_key=api_key)
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=1000,
+    )
+    return response.choices[0].message.content
+
+
+# Ordered list of AI engines for text generation
+_AI_ENGINES = [
+    ('Claude',  call_claude),
+    ('Gemini',  call_gemini),
+    ('Groq',   call_groq),
+]
+
+
+def generate_email(job_info: dict, blurb: str) -> str:
+    """Generate a letter of interest using the specified AI engine."""
+    prompt = build_prompt(job_info, blurb)
+    """ Try each engine in order, returning the first successful result. """
+    for label, fn in _AI_ENGINES:
+        log.info('Trying %s', label)
+        try:
+            result = fn(prompt)
+            if result:
+                log.info('Generated personalized email with %s', label)
+                return result
+        except Exception as e:
+            log.warning('%s failed: %s', label, e)
+
+    log.error('All AI engines exhausted')
+    sys.exit(1)
 
 
 # ─────────────────────────────────────────────
