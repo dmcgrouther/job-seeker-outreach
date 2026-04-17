@@ -397,7 +397,7 @@ def find_email(full_name: str, company: str) -> dict:
     domain = result['domain'] or extract_domain(snippet_text, company)
     if not domain:
         # Fallback: guess domain from company name
-        slug = re.sub(r'[^a-z0-9]', '', company.lower())
+        slug = re.sub(r'[^a-z0-9-]', '', company.lower())
         domain = f'{slug}.com'
         log.warning('Could not detect domain — guessing: %s', domain)
     else:
