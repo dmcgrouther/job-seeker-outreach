@@ -34,6 +34,10 @@ from logger import setup_logging
 log = setup_logging(__name__)
 
 
+# ── Constants ─────────────────────────────────────────────────────────────────
+DEFAULT_FORMAT = 'firstname.lastname'  # most common pattern; used as fallback
+
+
 # ── Common email format templates ────────────────────────────────────────────
 
 def generate_candidates(first: str, last: str, domain: str) -> list[tuple[str, str]]:
@@ -411,9 +415,9 @@ def find_email(full_name: str, company: str) -> dict:
         confidence = 'High'
         log.info('Detected format: %s', detected_fmt)
     else:
-        best_email = fmt_map['firstname.lastname']
+        best_email = fmt_map[DEFAULT_FORMAT]
         confidence = 'Medium (defaulted to most common pattern)'
-        detected_fmt = 'firstname.lastname'
+        detected_fmt = DEFAULT_FORMAT
         log.warning('Could not detect format – defaulting to most common pattern.')
 
     # 4. SMTP verification
