@@ -34,6 +34,10 @@ from logger import setup_logging
 log = setup_logging(__name__)
 
 
+# ── Constants ─────────────────────────────────────────────────────────────────
+DEFAULT_FORMAT = 'firstname.lastname'  # most common pattern; used as fallback
+
+
 # ── Common email format templates ────────────────────────────────────────────
 
 def generate_candidates(first: str, last: str, domain: str) -> list[tuple[str, str]]:
@@ -393,7 +397,10 @@ def find_email(full_name: str, company: str) -> dict:
     domain = result['domain'] or extract_domain(snippet_text, company)
     if not domain:
         # Fallback: guess domain from company name
-        slug = re.sub(r'[^a-z0-9]', '', company.lower())
+        slug = re.sub(r'[^a-z0-9-]', '', company.lower())
+        slug = re.sub(r'-{2,}', '-', slug).strip('-')
+        if not slug:
+            raise ValueError('Could not derive a valid domain slug from company name.')
         domain = f'{slug}.com'
         log.warning('Could not detect domain — guessing: %s', domain)
     else:
@@ -411,9 +418,9 @@ def find_email(full_name: str, company: str) -> dict:
         confidence = 'High'
         log.info('Detected format: %s', detected_fmt)
     else:
-        best_email = fmt_map['firstname.lastname']
+        best_email = fmt_map[DEFAULT_FORMAT]
         confidence = 'Medium (defaulted to most common pattern)'
-        detected_fmt = 'firstname.lastname'
+        detected_fmt = DEFAULT_FORMAT
         log.warning('Could not detect format – defaulting to most common pattern.')
 
     # 4. SMTP verification
